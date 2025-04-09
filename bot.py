@@ -4,7 +4,6 @@ from aiohttp import (
     ClientTimeout,
     FormData
 )
-from aiohttp_socks import ProxyConnector
 from fake_useragent import FakeUserAgent
 from datetime import datetime
 from colorama import *
@@ -72,6 +71,8 @@ class ZerosWallet:
                 with open(filename, 'r') as f:
                     self.proxies = f.read().splitlines()
             
+            self.proxies = [self.check_proxy_schemes(p) for p in self.proxies if p.strip()]
+            
             if not self.proxies:
                 self.log(f"{Fore.RED + Style.BRIGHT}No Proxies Found.{Style.RESET_ALL}")
                 return
@@ -85,17 +86,16 @@ class ZerosWallet:
             self.log(f"{Fore.RED + Style.BRIGHT}Failed To Load Proxies: {e}{Style.RESET_ALL}")
             self.proxies = []
 
-    def check_proxy_schemes(self, proxies):
-        schemes = ["http://", "https://", "socks4://", "socks5://"]
-        if any(proxies.startswith(scheme) for scheme in schemes):
-            return proxies
-        return f"http://{proxies}"
+    def check_proxy_schemes(self, proxy):
+        if proxy.startswith(("http://", "https://", "socks4://", "socks5://")):
+            return proxy
+        return f"http://{proxy}"
 
     def get_next_proxy_for_account(self, token):
         if token not in self.account_proxies:
             if not self.proxies:
                 return None
-            proxy = self.check_proxy_schemes(self.proxies[self.proxy_index])
+            proxy = self.proxies[self.proxy_index]
             self.account_proxies[token] = proxy
             self.proxy_index = (self.proxy_index + 1) % len(self.proxies)
         return self.account_proxies[token]
@@ -103,14 +103,13 @@ class ZerosWallet:
     def rotate_proxy_for_account(self, token):
         if not self.proxies:
             return None
-        proxy = self.check_proxy_schemes(self.proxies[self.proxy_index])
+        proxy = self.proxies[self.proxy_index]
         self.account_proxies[token] = proxy
         self.proxy_index = (self.proxy_index + 1) % len(self.proxies)
         return proxy
     
     def mask_account(self, account):
-        mask_account = account[:6] + '*' * 6 + account[-6:]
-        return mask_account
+        return account[:6] + '*' * 6 + account[-6:]
         
     def print_question(self):
         while True:
@@ -137,10 +136,13 @@ class ZerosWallet:
         url = "https://api.zeroswallet.com/login"
         data = FormData()
         data.add_field("uid", account)
+        
         for attempt in range(retries):
-            connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                async with ClientSession(
+                    timeout=ClientTimeout(total=60),
+                    proxy=proxy if proxy else None
+                ) as session:
                     async with session.post(url=url, headers=self.headers, data=data) as response:
                         response.raise_for_status()
                         result = await response.json()
@@ -156,10 +158,13 @@ class ZerosWallet:
         data = FormData()
         data.add_field("token", token)
         data.add_field("refcode", self.code)
+        
         for attempt in range(retries):
-            connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                async with ClientSession(
+                    timeout=ClientTimeout(total=60),
+                    proxy=proxy if proxy else None
+                ) as session:
                     async with session.post(url=url, headers=self.headers, data=data) as response:
                         response.raise_for_status()
                         return await response.json()
@@ -174,10 +179,13 @@ class ZerosWallet:
         data = FormData()
         data.add_field("token", token)
         data.add_field("refcode", self.code)
+        
         for attempt in range(retries):
-            connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                async with ClientSession(
+                    timeout=ClientTimeout(total=60),
+                    proxy=proxy if proxy else None
+                ) as session:
                     async with session.post(url=url, headers=self.headers, data=data) as response:
                         response.raise_for_status()
                         return await response.json()
@@ -191,10 +199,13 @@ class ZerosWallet:
         url = "https://api.zeroswallet.com/task"
         data = FormData()
         data.add_field("token", token)
+        
         for attempt in range(retries):
-            connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                async with ClientSession(
+                    timeout=ClientTimeout(total=60),
+                    proxy=proxy if proxy else None
+                ) as session:
                     async with session.post(url=url, headers=self.headers, data=data) as response:
                         response.raise_for_status()
                         return await response.json()
@@ -211,55 +222,28 @@ class ZerosWallet:
         while token is None:
             token = await self.user_login(account, proxy)
             if not token:
-                self.log(
-                    f"{Fore.CYAN+Style.BRIGHT}Status  :{Style.RESET_ALL}"
-                    f"{Fore.RED+Style.BRIGHT} Login Failed {Style.RESET_ALL}"
-                )
+                self.log(f"{Fore.RED + Style.BRIGHT}Login Failed {Style.RESET_ALL}")
                 proxy = self.rotate_proxy_for_account(account) if use_proxy else None
                 continue
 
         await self.user_confirm(token, proxy)
 
-        self.log(
-            f"{Fore.CYAN+Style.BRIGHT}Status  :{Style.RESET_ALL}"
-            f"{Fore.GREEN+Style.BRIGHT} Login Success {Style.RESET_ALL}"
-        )
-
-        self.log(
-            f"{Fore.CYAN+Style.BRIGHT}Proxy   :{Style.RESET_ALL}"
-            f"{Fore.WHITE+Style.BRIGHT} {proxy} {Style.RESET_ALL}"
-        )
+        self.log(f"{Fore.GREEN + Style.BRIGHT}Login Success {Style.RESET_ALL}")
+        self.log(f"{Fore.WHITE + Style.BRIGHT}Proxy: {proxy or 'No Proxy'} {Style.RESET_ALL}")
 
         wallet = await self.user_balance(token, proxy)
         if wallet:
-            points = 0
-
-            tokens = next((item for item in wallet["data"] if item["coin_id"] == "3"), None)
-            if tokens:
-                points = tokens.get("balance")
-
-            self.log(
-                f"{Fore.CYAN+Style.BRIGHT}Balance :{Style.RESET_ALL}"
-                f"{Fore.WHITE+Style.BRIGHT} {points} POINT {Style.RESET_ALL}"
-            )
-            
+            points = next((item.get("balance", 0) for item in wallet.get("data", []) 
+                         if item.get("coin_id") == "3"), 0)
+            self.log(f"{Fore.WHITE + Style.BRIGHT}Balance: {points} POINT {Style.RESET_ALL}")
         else:
-            self.log(
-                f"{Fore.CYAN+Style.BRIGHT}Balance :{Style.RESET_ALL}"
-                f"{Fore.RED+Style.BRIGHT} Data Is None {Style.RESET_ALL}"
-            )
+            self.log(f"{Fore.RED + Style.BRIGHT}Balance Data Missing {Style.RESET_ALL}")
 
         check_in = await self.perform_checkin(token, proxy)
         if check_in and check_in.get("success"):
-            self.log(
-                f"{Fore.CYAN+Style.BRIGHT}Check-In:{Style.RESET_ALL}"
-                f"{Fore.GREEN+Style.BRIGHT} Is Claimed {Style.RESET_ALL}"
-            )
+            self.log(f"{Fore.GREEN + Style.BRIGHT}Check-In: Claimed {Style.RESET_ALL}")
         else:
-            self.log(
-                f"{Fore.CYAN+Style.BRIGHT}Check-In:{Style.RESET_ALL}"
-                f"{Fore.YELLOW+Style.BRIGHT} Already Claimed {Style.RESET_ALL}"
-            )
+            self.log(f"{Fore.YELLOW + Style.BRIGHT}Check-In: Already Claimed {Style.RESET_ALL}")
         
     async def main(self):
         try:
@@ -269,16 +253,11 @@ class ZerosWallet:
             use_proxy_choice = self.print_question()
 
             while True:
-                use_proxy = False
-                if use_proxy_choice in [1, 2]:
-                    use_proxy = True
-
+                use_proxy = use_proxy_choice in [1, 2]
+                
                 self.clear_terminal()
                 self.welcome()
-                self.log(
-                    f"{Fore.GREEN + Style.BRIGHT}Account's Total: {Style.RESET_ALL}"
-                    f"{Fore.WHITE + Style.BRIGHT}{len(accounts)}{Style.RESET_ALL}"
-                )
+                self.log(f"{Fore.GREEN}Accounts: {len(accounts)}{Style.RESET_ALL}")
 
                 if use_proxy:
                     await self.load_proxies(use_proxy_choice)
@@ -286,42 +265,24 @@ class ZerosWallet:
                 separator = "=" * 23
                 for account in accounts:
                     if account:
-                        self.log(
-                            f"{Fore.CYAN + Style.BRIGHT}{separator}[{Style.RESET_ALL}"
-                            f"{Fore.WHITE + Style.BRIGHT} {self.mask_account(account)} {Style.RESET_ALL}"
-                            f"{Fore.CYAN + Style.BRIGHT}]{separator}{Style.RESET_ALL}"
-                        )
+                        self.log(f"{separator}[ {self.mask_account(account)} ]{separator}")
                         await self.process_accounts(account, use_proxy)
                         await asyncio.sleep(3)
 
-                self.log(f"{Fore.CYAN + Style.BRIGHT}={Style.RESET_ALL}"*68)
+                self.log(f"{Fore.CYAN}={Style.RESET_ALL}"*68)
                 seconds = 12 * 60 * 60
                 while seconds > 0:
-                    formatted_time = self.format_seconds(seconds)
-                    print(
-                        f"{Fore.CYAN+Style.BRIGHT}[ Wait for{Style.RESET_ALL}"
-                        f"{Fore.WHITE+Style.BRIGHT} {formatted_time} {Style.RESET_ALL}"
-                        f"{Fore.CYAN+Style.BRIGHT}... ]{Style.RESET_ALL}"
-                        f"{Fore.WHITE+Style.BRIGHT} | {Style.RESET_ALL}"
-                        f"{Fore.BLUE+Style.BRIGHT}All Accounts Have Been Processed.{Style.RESET_ALL}",
-                        end="\r"
-                    )
+                    print(f"Waiting {self.format_seconds(seconds)}...", end="\r")
                     await asyncio.sleep(1)
                     seconds -= 1
 
         except FileNotFoundError:
-            self.log(f"{Fore.RED}File 'accounts.txt' Not Found.{Style.RESET_ALL}")
-            return
+            self.log(f"{Fore.RED}accounts.txt missing{Style.RESET_ALL}")
         except Exception as e:
-            self.log(f"{Fore.RED+Style.BRIGHT}Error: {e}{Style.RESET_ALL}")
+            self.log(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     try:
-        bot = ZerosWallet()
-        asyncio.run(bot.main())
+        asyncio.run(ZerosWallet().main())
     except KeyboardInterrupt:
-        print(
-            f"{Fore.CYAN + Style.BRIGHT}[ {datetime.now().astimezone(wib).strftime('%x %X %Z')} ]{Style.RESET_ALL}"
-            f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}"
-            f"{Fore.RED + Style.BRIGHT}[ EXIT ] Zeros Wallet - BOT{Style.RESET_ALL}                                       "                              
-        )
+        print(f"\n{Fore.RED}Bot Stopped{Style.RESET_ALL}")
