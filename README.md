@@ -21,7 +21,7 @@ Zeros Wallet BOT
 
 1. **Clone The Repositories:**
    ```bash
-   git clone https://github.com/vonssy/ZerosWallet-BOT.git
+   git clone https://github.com/ikigai-hub/ZerosWallet-BOT.git
    ```
    ```bash
    cd ZerosWallet-BOT
