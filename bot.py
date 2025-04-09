@@ -1,9 +1,4 @@
-from aiohttp import (
-    ClientResponseError,
-    ClientSession,
-    ClientTimeout,
-    FormData
-)
+from aiohttp import ClientResponseError, ClientSession, ClientTimeout, FormData
 from fake_useragent import FakeUserAgent
 from datetime import datetime
 from colorama import *
@@ -27,6 +22,7 @@ class ZerosWallet:
         self.proxies = []
         self.proxy_index = 0
         self.account_proxies = {}
+        self.max_retries = 3  # Added max retries constant
 
     def clear_terminal(self):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -214,75 +210,100 @@ class ZerosWallet:
                     await asyncio.sleep(5)
                     continue
                 return None
-        
+    # ... [Keep all helper methods same until process_accounts] ...
+
     async def process_accounts(self, account: str, use_proxy: bool):
-        proxy = self.get_next_proxy_for_account(account) if use_proxy else None
-
-        token = None
-        while token is None:
-            token = await self.user_login(account, proxy)
-            if not token:
-                self.log(f"{Fore.RED + Style.BRIGHT}Login Failed {Style.RESET_ALL}")
-                proxy = self.rotate_proxy_for_account(account) if use_proxy else None
-                continue
-
-        await self.user_confirm(token, proxy)
-
-        self.log(f"{Fore.GREEN + Style.BRIGHT}Login Success {Style.RESET_ALL}")
-        self.log(f"{Fore.WHITE + Style.BRIGHT}Proxy: {proxy or 'No Proxy'} {Style.RESET_ALL}")
-
-        wallet = await self.user_balance(token, proxy)
-        if wallet:
-            points = next((item.get("balance", 0) for item in wallet.get("data", []) 
-                         if item.get("coin_id") == "3"), 0)
-            self.log(f"{Fore.WHITE + Style.BRIGHT}Balance: {points} POINT {Style.RESET_ALL}")
-        else:
-            self.log(f"{Fore.RED + Style.BRIGHT}Balance Data Missing {Style.RESET_ALL}")
-
-        check_in = await self.perform_checkin(token, proxy)
-        if check_in and check_in.get("success"):
-            self.log(f"{Fore.GREEN + Style.BRIGHT}Check-In: Claimed {Style.RESET_ALL}")
-        else:
-            self.log(f"{Fore.YELLOW + Style.BRIGHT}Check-In: Already Claimed {Style.RESET_ALL}")
+        retry_count = 0
+        success = False
         
+        while not success and retry_count < self.max_retries:
+            proxy = self.get_next_proxy_for_account(account) if use_proxy else None
+            try:
+                # Login
+                token = await self.user_login(account, proxy)
+                if not token:
+                    raise Exception("Login failed")
+
+                # Confirm referral
+                confirm_res = await self.user_confirm(token, proxy)
+                if not confirm_res or "success" not in confirm_res:
+                    raise Exception("Referral confirmation failed")
+
+                # Get balance
+                wallet = await self.user_balance(token, proxy)
+                points = next((item.get("balance", 0) for item in wallet.get("data", []) 
+                            if item.get("coin_id") == "3") if wallet else 0
+
+                # Check-in
+                check_in = await self.perform_checkin(token, proxy)
+                if not check_in or "success" not in check_in:
+                    raise Exception("Check-in failed")
+
+                # Log results
+                self.log(f"{Fore.GREEN}Success | Balance: {points} POINTS{Style.RESET_ALL}")
+                success = True
+
+            except Exception as e:
+                self.log(f"{Fore.RED}Attempt {retry_count + 1} failed: {str(e)}{Style.RESET_ALL}")
+                retry_count += 1
+                
+                # Rotate proxy on failure
+                if use_proxy:
+                    new_proxy = self.rotate_proxy_for_account(account)
+                    self.log(f"{Fore.YELLOW}Rotating proxy to: {new_proxy}{Style.RESET_ALL}")
+                
+                await asyncio.sleep(5)  # Add delay between retries
+
+        if not success:
+            self.log(f"{Fore.RED}Failed after {self.max_retries} attempts{Style.RESET_ALL}")
+
     async def main(self):
         try:
             with open('accounts.txt', 'r') as file:
                 accounts = [line.strip() for line in file if line.strip()]
             
             use_proxy_choice = self.print_question()
+            use_proxy = use_proxy_choice in [1, 2]
 
             while True:
-                use_proxy = use_proxy_choice in [1, 2]
-                
                 self.clear_terminal()
                 self.welcome()
-                self.log(f"{Fore.GREEN}Accounts: {len(accounts)}{Style.RESET_ALL}")
+                self.log(f"{Fore.CYAN}Accounts loaded: {len(accounts)}{Style.RESET_ALL}")
 
                 if use_proxy:
                     await self.load_proxies(use_proxy_choice)
-                
-                separator = "=" * 23
+                    # Validate proxies before starting
+                    if not self.proxies:
+                        self.log(f"{Fore.RED}No valid proxies available!{Style.RESET_ALL}")
+                        return
+
+                # Process accounts with fresh proxy each cycle
+                self.account_proxies = {}  # Reset proxy assignments
+                self.proxy_index = 0
+
                 for account in accounts:
                     if account:
-                        self.log(f"{separator}[ {self.mask_account(account)} ]{separator}")
+                        self.log(f"{'='*30} Processing {self.mask_account(account)} {'='*30}")
                         await self.process_accounts(account, use_proxy)
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(3)  # Add delay between accounts
 
-                self.log(f"{Fore.CYAN}={Style.RESET_ALL}"*68)
-                seconds = 12 * 60 * 60
-                while seconds > 0:
-                    print(f"Waiting {self.format_seconds(seconds)}...", end="\r")
-                    await asyncio.sleep(1)
-                    seconds -= 1
+                self.log(f"{Fore.CYAN}Cycle completed. Restarting in 12 hours...{Style.RESET_ALL}")
+                await self.countdown_timer(43200)  # 12 hours in seconds
 
-        except FileNotFoundError:
-            self.log(f"{Fore.RED}accounts.txt missing{Style.RESET_ALL}")
         except Exception as e:
-            self.log(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+            self.log(f"{Fore.RED}Critical error: {str(e)}{Style.RESET_ALL}")
+
+    async def countdown_timer(self, seconds):
+        while seconds > 0:
+            mins, secs = divmod(seconds, 60)
+            hours, mins = divmod(mins, 60)
+            timer = f"{hours:02d}:{mins:02d}:{secs:02d}"
+            print(f"{Fore.YELLOW}Next cycle in: {timer}{Style.RESET_ALL}", end="\r")
+            await asyncio.sleep(1)
+            seconds -= 1
 
 if __name__ == "__main__":
     try:
         asyncio.run(ZerosWallet().main())
     except KeyboardInterrupt:
-        print(f"\n{Fore.RED}Bot Stopped{Style.RESET_ALL}")
+        print(f"\n{Fore.RED}Bot terminated by user{Style.RESET_ALL}")
