@@ -232,7 +232,7 @@ class ZerosWallet:
                 # Get balance
                 wallet = await self.user_balance(token, proxy)
                 points = next((item.get("balance", 0) for item in wallet.get("data", []) 
-                            if item.get("coin_id") == "3") if wallet else 0
+                            if item.get("coin_id") == "3") if wallet else 0)
 
                 # Check-in
                 check_in = await self.perform_checkin(token, proxy)
