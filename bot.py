@@ -186,6 +186,57 @@ class ZerosWallet:
             self.log(f"{Fore.RED}Complete failure: {self.mask_account(account)}{Style.RESET_ALL}")
 
     # ... (keep existing API methods and main function)
+    async def main(self):
+            try:
+                self.clear_terminal()
+                self.welcome()
+                
+                # Load accounts
+                with open('accounts.txt', 'r') as file:
+                    accounts = [line.strip() for line in file if line.strip()]
+                self.log(f"{Fore.CYAN}Loaded {len(accounts)} accounts{Style.RESET_ALL}")
+    
+                # Proxy configuration
+                use_proxy_choice = self.print_question()
+                use_proxy = use_proxy_choice in (1, 2)
+                if use_proxy:
+                    await self.load_proxies(use_proxy_choice)
+    
+                # Process in batches with delays
+                batch_size = 20
+                for i in range(0, len(accounts), batch_size):
+                    batch = accounts[i:i+batch_size]
+                    tasks = [self.process_account(acc, use_proxy) for acc in batch]
+                    await asyncio.gather(*tasks)
+                    delay = random.uniform(5, 15)
+                    self.log(f"{Fore.MAGENTA}Next batch in {delay:.1f}s...{Style.RESET_ALL}")
+                    await asyncio.sleep(delay)
+    
+                # Final wait cycle
+                self.log(f"{Fore.CYAN}All accounts processed. Cycling...{Style.RESET_ALL}")
+                while True:
+                    await asyncio.sleep(43200)  # 12 hours
+                    await self.main()
+    
+            except KeyboardInterrupt:
+                self.log(f"{Fore.RED}Process interrupted by user{Style.RESET_ALL}")
+            except Exception as e:
+                self.log(f"{Fore.RED}Critical error: {str(e)}{Style.RESET_ALL}")
+    
+    def print_question(self) -> int:
+        while True:
+            try:
+                print(f"{Fore.CYAN}Choose proxy mode:")
+                print("1. Use public proxies")
+                print("2. Use private proxies")
+                print("3. No proxies")
+                choice = int(input("Selection [1-3]: "))
+                if 1 <= choice <= 3:
+                    return choice
+                print(f"{Fore.RED}Invalid choice{Style.RESET_ALL}")
+            except ValueError:
+                print(f"{Fore.RED}Enter a number{Style.RESET_ALL}")
+
 
 if __name__ == "__main__":
     bot = ZerosWallet()
