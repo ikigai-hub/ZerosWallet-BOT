@@ -50,21 +50,40 @@ class ZerosWallet:
             f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}{message}",
             flush=True
         )
+        
+     def welcome(self):
+        print(
+            f"""
+        {Fore.GREEN + Style.BRIGHT}Auto Claim {Fore.BLUE + Style.BRIGHT}Zeros Wallet - BOT
+            """
+            f"""
+        {Fore.GREEN + Style.BRIGHT}Rey? {Fore.YELLOW + Style.BRIGHT}<INI WATERMARK>
+            """
+        )
 
-    # ... (keep existing welcome, format_seconds methods)
-
+    def format_seconds(self, seconds: int) -> str:
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
     async def validate_proxy(self, proxy: str) -> bool:
-        """Enhanced proxy validation with multiple test endpoints"""
-        try:
-            connector = ProxyConnector.from_url(proxy, ssl=self.ssl_context)
-            async with ClientSession(connector=connector, 
-                                   timeout=ClientTimeout(total=15)) as session:
-                # Test multiple endpoints
-                async with session.get("https://www.google.com"):
-                async with session.get("https://api.zeroswallet.com"):
-                    return True
-        except Exception:
-            return False
+    """Validate proxy connection to multiple endpoints"""
+    try:
+        connector = ProxyConnector.from_url(proxy, ssl=self.ssl_context)
+        async with ClientSession(
+            connector=connector, 
+            timeout=ClientTimeout(total=15)
+        ) as session:
+            # Test Google endpoint
+            async with session.get("https://www.google.com") as google_resp:
+                if google_resp.status != 200:
+                    return False
+            
+            # Test API endpoint
+            async with session.get("https://api.zeroswallet.com") as api_resp:
+                return api_resp.status == 200
+                
+    except Exception:
+        return False
 
     async def load_proxies(self, use_proxy_choice: int):
         """Load and validate 90 proxies"""
