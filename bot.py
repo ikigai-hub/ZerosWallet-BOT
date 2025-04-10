@@ -62,23 +62,23 @@ class ZerosWallet:
         return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
     async def validate_proxy(self, proxy: str) -> bool:
     """Validate proxy connection to multiple endpoints"""
-    try:
-        connector = ProxyConnector.from_url(proxy, ssl=self.ssl_context)
-        async with ClientSession(
-            connector=connector, 
-            timeout=ClientTimeout(total=15)
-        ) as session:
-            # Test Google endpoint
-            async with session.get("https://www.google.com") as google_resp:
-                if google_resp.status != 200:
-                    return False
-            
-            # Test API endpoint
-            async with session.get("https://api.zeroswallet.com") as api_resp:
-                return api_resp.status == 200
+        try:
+            connector = ProxyConnector.from_url(proxy, ssl=self.ssl_context)
+            async with ClientSession(
+                connector=connector, 
+                timeout=ClientTimeout(total=15)
+            ) as session:
+                # Test Google endpoint
+                async with session.get("https://www.google.com") as google_resp:
+                    if google_resp.status != 200:
+                        return False
                 
-    except Exception:
-        return False
+                # Test API endpoint
+                async with session.get("https://api.zeroswallet.com") as api_resp:
+                    return api_resp.status == 200
+                    
+        except Exception:
+            return False
 
     async def load_proxies(self, use_proxy_choice: int):
         """Load and validate 90 proxies"""
