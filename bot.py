@@ -223,7 +223,7 @@ class ZerosWallet:
                 # Display results
                 self.log(f"Login Success | Proxy: {proxy or 'None'}")
                 if wallet:
-                    points = next((i.get("balance", 0) for i in wallet.get("data", []) if i.get("coin_id") == "3")
+                    points = next((i.get("balance", 0) for i in wallet.get("data", []) if i.get("coin_id") == "3"))
                     self.log(f"Balance: {points} POINTS")
                 self.log("Check-In: " + ("Claimed" if check_in and check_in.get("success") else "Failed"))
                 
