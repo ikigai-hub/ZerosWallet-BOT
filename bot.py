@@ -49,10 +49,12 @@ class ZerosWallet:
             f"{Fore.CYAN + Style.BRIGHT}[ {datetime.now().astimezone(wib).strftime('%x %X %Z')} ]{Style.RESET_ALL}"
             f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}{message}",
             flush=True
-        )
+            )
         
      def welcome(self):
-        print(f"""{Fore.GREEN + Style.BRIGHT}Auto Claim {Fore.BLUE + Style.BRIGHT}Zeros Wallet - BOT"""f"""{Fore.GREEN + Style.BRIGHT}Rey? {Fore.YELLOW + Style.BRIGHT}<INI WATERMARK>""")
+        print(f"""{Fore.GREEN + Style.BRIGHT}Auto Claim {Fore.BLUE + Style.BRIGHT}Zeros Wallet - BOT"""
+              f"""{Fore.GREEN + Style.BRIGHT}Rey? {Fore.YELLOW + Style.BRIGHT}<INI WATERMARK>"""
+             )
 
     def format_seconds(self, seconds: int) -> str:
         hours, remainder = divmod(seconds, 3600)
