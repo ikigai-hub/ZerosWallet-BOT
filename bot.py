@@ -1,14 +1,14 @@
-from aiohttp import ClientSession, ClientTimeout, FormData, ClientResponseError
+from aiohttp import (
+    ClientResponseError,
+    ClientSession,
+    ClientTimeout,
+    FormData
+)
 from fake_useragent import FakeUserAgent
 from datetime import datetime
-from colorama import Fore, Style, init
-import asyncio
-import os
-import pytz
-import random
+from colorama import *
+import asyncio, os, pytz, random
 
-# Initialize colorama
-init(autoreset=True)
 wib = pytz.timezone('Asia/Jakarta')
 
 class ZerosWallet:
@@ -44,6 +44,11 @@ class ZerosWallet:
         {Fore.GREEN + Style.BRIGHT}Rey? {Fore.YELLOW + Style.BRIGHT}<INI WATERMARK>
         """)
 
+    def format_seconds(self, seconds):
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
+    
     async def load_proxies(self, use_proxy_choice: int):
         filename = "proxy.txt"
         try:
@@ -57,17 +62,17 @@ class ZerosWallet:
             else:
                 with open(filename, 'r') as f:
                     self.proxies = f.read().splitlines()
-
+            
             # Validate proxy format
             self.proxies = [
                 p.strip() for p in self.proxies
-                if p.strip().startswith(("http://", "https://"))
+                if p.strip().startswith(("http://", "https://", "socks4://", "socks5://"))
             ]
             
             if not self.proxies:
                 self.log(f"{Fore.RED}No valid proxies found!")
                 return False
-                
+            
             self.log(f"{Fore.GREEN}Loaded {len(self.proxies)} proxies")
             return True
             
@@ -75,15 +80,40 @@ class ZerosWallet:
             self.log(f"{Fore.RED}Proxy load failed: {str(e)}")
             return False
 
-    def get_next_proxy(self):
+    def get_next_proxy_for_account(self, account):
+        if account not in self.account_proxies:
+            if not self.proxies:
+                return None
+            proxy = self.proxies[self.proxy_index]
+            self.account_proxies[account] = proxy
+            self.proxy_index = (self.proxy_index + 1) % len(self.proxies)
+        return self.account_proxies[account]
+
+    def rotate_proxy_for_account(self, account):
         if not self.proxies:
             return None
         proxy = self.proxies[self.proxy_index]
+        self.account_proxies[account] = proxy
         self.proxy_index = (self.proxy_index + 1) % len(self.proxies)
         return proxy
-
+    
     def mask_account(self, account):
         return account[:6] + '*'*6 + account[-6:]
+        
+    def print_question(self):
+        while True:
+            try:
+                print("1. Run With Monosans Proxy")
+                print("2. Run With Private Proxy")
+                print("3. Run Without Proxy")
+                choose = int(input("Choose [1/2/3] -> ").strip())
+
+                if choose in [1, 2, 3]:
+                    return choose
+                else:
+                    print(f"{Fore.RED}Please enter 1, 2 or 3")
+            except ValueError:
+                print(f"{Fore.RED}Invalid input")
 
     async def user_login(self, account: str, proxy=None, retries=3):
         url = "https://api.zeroswallet.com/login"
@@ -92,69 +122,38 @@ class ZerosWallet:
         
         for attempt in range(retries):
             try:
-                # Rotate UA and proxy for each attempt
+                # Rotate User-Agent for each attempt
                 self.headers["User-Agent"] = FakeUserAgent().random
-                current_proxy = proxy or self.get_next_proxy()
-
+                
                 async with ClientSession(timeout=ClientTimeout(total=30)) as session:
                     async with session.post(
                         url=url,
                         headers=self.headers,
                         data=data,
-                        proxy=current_proxy,
+                        proxy=proxy,
                         verify_ssl=False
                     ) as response:
                         if response.status == 429:
                             retry_after = int(response.headers.get("Retry-After", 10))
-                            self.log(f"{Fore.YELLOW}Rate limited - retrying in {retry_after}s")
+                            self.log(f"{Fore.YELLOW}Rate limited. Retrying in {retry_after}s")
                             await asyncio.sleep(retry_after)
                             continue
-
+                            
                         response.raise_for_status()
                         result = await response.json()
-                        return result.get("token"), current_proxy
-
+                        return result.get("token")
             except Exception as e:
-                error_msg = f"{str(e)}"
-                if "500" in error_msg:
-                    error_msg += " (Bad Proxy)"
-                self.log(f"{Fore.RED}Login attempt {attempt+1} failed: {error_msg}")
-                
-                # Rotate proxy immediately on failure
-                current_proxy = self.get_next_proxy()
-                
-                # Exponential backoff with jitter
-                await asyncio.sleep(2 ** (attempt + 1) + random.uniform(0, 1))
-                
-        return None, None
-
-    async def process_account(self, account: str, use_proxy: bool):
-        token, proxy = None, None
-        try:
-            # Initial randomized delay
-            await asyncio.sleep(random.uniform(1, 3))
+                self.log(f"{Fore.RED}Login attempt {attempt+1} failed: {str(e)}")
+                if attempt < retries - 1:
+                    await asyncio.sleep(2 ** (attempt + 1) + random.uniform(0, 1))
+                    continue
+        return None
             
-            token, proxy = await self.user_login(account, None, 3)
-            if not token:
-                return
-
-            # Perform account actions
-            await self.perform_checkin(token, proxy)
-            await self.check_balance(token, proxy)
-            
-            # Success delay
-            await asyncio.sleep(random.uniform(5, 10))
-
-        except Exception as e:
-            self.log(f"{Fore.RED}Account processing failed: {str(e)}")
-        finally:
-            if proxy:
-                self.proxies.append(proxy)  # Recycle proxy
-
-    async def perform_checkin(self, token: str, proxy: str):
-        url = "https://api.zeroswallet.com/task"
+    async def user_confirm(self, token: str, proxy=None):
+        url = "https://api.zeroswallet.com/addreferral"
         data = FormData()
         data.add_field("token", token)
+        data.add_field("refcode", self.code)
         
         try:
             async with ClientSession(timeout=ClientTimeout(total=30)) as session:
@@ -165,15 +164,12 @@ class ZerosWallet:
                     proxy=proxy,
                     verify_ssl=False
                 ) as response:
-                    result = await response.json()
-                    if result.get("success"):
-                        self.log(f"{Fore.GREEN}Check-in successful!")
-                    else:
-                        self.log(f"{Fore.YELLOW}Check-in failed: {result.get('message')}")
+                    return await response.json()
         except Exception as e:
-            self.log(f"{Fore.RED}Check-in error: {str(e)}")
+            self.log(f"{Fore.RED}Referral error: {str(e)}")
+            return None
 
-    async def check_balance(self, token: str, proxy: str):
+    async def user_balance(self, token: str, proxy=None):
         url = "https://api.zeroswallet.com/auth/mywallet"
         data = FormData()
         data.add_field("token", token)
@@ -187,43 +183,114 @@ class ZerosWallet:
                     proxy=proxy,
                     verify_ssl=False
                 ) as response:
-                    result = await response.json()
-                    if "data" in result:
-                        points = next((item["balance"] for item in result["data"] if item["coin_id"] == "3"), 0)
-                        self.log(f"{Fore.CYAN}Balance: {points} POINTS")
+                    return await response.json()
         except Exception as e:
-            self.log(f"{Fore.RED}Balance check failed: {str(e)}")
-
-    async def main(self):
-        self.clear_terminal()
-        self.welcome()
+            self.log(f"{Fore.RED}Balance error: {str(e)}")
+            return None
+            
+    async def perform_checkin(self, token: str, proxy=None):
+        url = "https://api.zeroswallet.com/task"
+        data = FormData()
+        data.add_field("token", token)
         
         try:
-            with open('accounts.txt', 'r') as f:
-                accounts = [line.strip() for line in f if line.strip()]
+            async with ClientSession(timeout=ClientTimeout(total=30)) as session:
+                async with session.post(
+                    url=url,
+                    headers=self.headers,
+                    data=data,
+                    proxy=proxy,
+                    verify_ssl=False
+                ) as response:
+                    return await response.json()
+        except Exception as e:
+            self.log(f"{Fore.RED}Check-in error: {str(e)}")
+            return None
+        
+    async def process_account(self, account: str, use_proxy: bool):
+        proxy = self.get_next_proxy_for_account(account) if use_proxy else None
+        masked_account = self.mask_account(account)
+
+        for attempt in range(3):
+            token = await self.user_login(account, proxy)
+            if not token:
+                # Rotate proxy on failure
+                if use_proxy:
+                    proxy = self.rotate_proxy_for_account(account)
+                continue
                 
-            self.log(f"{Fore.GREEN}Loaded {len(accounts)} accounts")
+            try:
+                # Add random delay between actions
+                await asyncio.sleep(random.uniform(1, 3))
+                
+                # Confirm referral
+                confirm_res = await self.user_confirm(token, proxy)
+                if confirm_res and confirm_res.get("success"):
+                    self.log(f"{Fore.GREEN}{masked_account} | Referral confirmed")
+                
+                # Check balance
+                balance_res = await self.user_balance(token, proxy)
+                if balance_res and "data" in balance_res:
+                    points = next((item["balance"] for item in balance_res["data"] if item["coin_id"] == "3"), 0)
+                    self.log(f"{Fore.CYAN}{masked_account} | Balance: {points} POINTS")
+                
+                # Perform check-in
+                checkin_res = await self.perform_checkin(token, proxy)
+                if checkin_res and checkin_res.get("success"):
+                    self.log(f"{Fore.GREEN}{masked_account} | Check-in successful")
+                else:
+                    msg = checkin_res.get("message", "Unknown error") if checkin_res else "No response"
+                    self.log(f"{Fore.YELLOW}{masked_account} | Check-in failed: {msg}")
+                
+                # Success - break retry loop
+                break
+                
+            except Exception as e:
+                self.log(f"{Fore.RED}{masked_account} | Processing error: {str(e)}")
+                if use_proxy:
+                    proxy = self.rotate_proxy_for_account(account)
+                
+            finally:
+                await asyncio.sleep(random.uniform(2, 5))
+
+    async def main(self):
+        try:
+            with open('accounts.txt', 'r') as file:
+                accounts = [line.strip() for line in file if line.strip()]
             
-            # Proxy selection
-            use_proxy = input(f"{Fore.YELLOW}Use proxies? (y/n): ").lower() == 'y'
-            if use_proxy and not await self.load_proxies(2):
-                use_proxy = False
-                self.log(f"{Fore.YELLOW}Continuing without proxies")
+            use_proxy_choice = self.print_question()
+            use_proxy = use_proxy_choice in [1, 2]
+
+            while True:
+                self.clear_terminal()
+                self.welcome()
+                self.log(f"{Fore.GREEN}Processing {len(accounts)} accounts")
+
+                if use_proxy:
+                    if not await self.load_proxies(use_proxy_choice):
+                        use_proxy = False
+                        self.log(f"{Fore.YELLOW}Continuing without proxies")
+
+                # Process all accounts in sequence
+                for account in accounts:
+                    if not account:
+                        continue
+                    await self.process_account(account, use_proxy)
                 
-            # Process accounts with concurrency control
-            semaphore = asyncio.Semaphore(3)  # 3 concurrent requests
-            async with semaphore:
-                tasks = [self.process_account(acc, use_proxy) for acc in accounts]
-                await asyncio.gather(*tasks)
-                
+                # Wait 12 hours before next cycle
+                wait_time = 12 * 60 * 60
+                self.log(f"{Fore.CYAN}Cycle completed. Next run in {self.format_seconds(wait_time)}")
+                while wait_time > 0:
+                    formatted = self.format_seconds(wait_time)
+                    print(f"{Fore.CYAN}Next run in: {formatted}", end='\r')
+                    await asyncio.sleep(1)
+                    wait_time -= 1
+
+        except KeyboardInterrupt:
+            self.log(f"{Fore.RED}Process interrupted")
         except Exception as e:
             self.log(f"{Fore.RED}Fatal error: {str(e)}")
-        finally:
-            self.log(f"{Fore.GREEN}Process completed")
 
 if __name__ == "__main__":
-    try:
-        bot = ZerosWallet()
-        asyncio.run(bot.main())
-    except KeyboardInterrupt:
-        print(f"\n{Fore.RED}Operation cancelled by user")
+    bot = ZerosWallet()
+    asyncio.run(bot.main())
