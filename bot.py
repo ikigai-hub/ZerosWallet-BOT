@@ -61,7 +61,7 @@ class ZerosWallet:
         minutes, seconds = divmod(remainder, 60)
         return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
     async def validate_proxy(self, proxy: str) -> bool:
-    """Validate proxy connection to multiple endpoints"""
+        """Validate proxy connection to multiple endpoints"""
         try:
             connector = ProxyConnector.from_url(proxy, ssl=self.ssl_context)
             async with ClientSession(
